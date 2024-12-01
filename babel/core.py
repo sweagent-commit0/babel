@@ -152,7 +152,8 @@ class Locale:
         :param category: one of the ``LC_XXX`` environment variable names
         :param aliases: a dictionary of aliases for locale identifiers
         """
-        pass
+        identifier = default_locale(category, aliases)
+        return cls.parse(identifier)
 
     @classmethod
     def negotiate(cls, preferred: Iterable[str], available: Iterable[str], sep: str='_', aliases: Mapping[str, str]=LOCALE_ALIASES) -> Locale | None:
@@ -175,43 +176,32 @@ class Locale:
         :param available: the list of locale identifiers available
         :param aliases: a dictionary of aliases for locale identifiers
         """
-        pass
+        identifier = negotiate_locale(preferred, available, sep, aliases)
+        if identifier:
+            return cls.parse(identifier)
+        return None
 
     @classmethod
-    def parse(cls, identifier: str | Locale | None, sep: str='_', resolve_likely_subtags: bool=True) -> Locale:
+    @classmethod
+    def parse(cls, identifier: str | Locale | None, sep: str = '_', resolve_likely_subtags: bool = True) -> Locale:
         """Create a `Locale` instance for the given locale identifier.
 
         >>> l = Locale.parse('de-DE', sep='-')
         >>> l.display_name
         u'Deutsch (Deutschland)'
 
-        If the `identifier` parameter is not a string, but actually a `Locale`
-        object, that object is returned:
+        If the `identifier` parameter is not a string, but a `Locale` object,
+        that object is returned:
 
         >>> Locale.parse(l)
         Locale('de', territory='DE')
 
-        If the `identifier` parameter is neither of these, such as `None`
-        e.g. because a default locale identifier could not be determined,
-        a `TypeError` is raised:
-
-        >>> Locale.parse(None)
-        Traceback (most recent call last):
-            ...
-        TypeError: ...
-
-        This also can perform resolving of likely subtags which it does
-        by default.  This is for instance useful to figure out the most
-        likely locale for a territory you can use ``'und'`` as the
-        language tag:
+        This also can perform resolving of likely subtags which it does by
+        default.  This is for instance useful to figure out the most likely
+        locale for a territory you can use ``'und'`` as the language tag:
 
         >>> Locale.parse('und_AT')
         Locale('de', territory='AT')
-
-        Modifiers are optional, and always at the end, separated by "@":
-
-        >>> Locale.parse('de_AT@euro')
-        Locale('de', territory='AT', modifier='euro')
 
         :param identifier: the locale identifier string
         :param sep: optional component separator
@@ -221,18 +211,44 @@ class Locale:
                                        instance ``zh_TW`` by itself is not a
                                        locale that exists but Babel can
                                        automatically expand it to the full
-                                       form of ``zh_hant_TW``.  Note that this
+                                       form of ``zh_Hant_TW``.  Note that this
                                        expansion is only taking place if no
-                                       locale exists otherwise.  For instance
-                                       there is a locale ``en`` that can exist
-                                       by itself.
-        :raise `ValueError`: if the string does not appear to be a valid locale
-                             identifier
+                                       locale actually exists (as opposed to
+                                       ``'und'`` locale).
         :raise `UnknownLocaleError`: if no locale data is available for the
                                      requested locale
-        :raise `TypeError`: if the identifier is not a string or a `Locale`
         """
-        pass
+        if isinstance(identifier, Locale):
+            return identifier
+        if identifier is None:
+            return cls.default()
+
+        parts = parse_locale(identifier, sep)
+        input_id = get_locale_identifier(parts)
+
+        def _try_load(parts):
+            try:
+                return cls(*parts)
+            except ValueError:
+                return None
+
+        locale = _try_load(parts)
+        if locale is not None:
+            return locale
+        if not resolve_likely_subtags:
+            raise UnknownLocaleError(input_id)
+
+        # Try again with likely subtag resolution
+        likely_subtags = get_global('likely_subtags')
+        for i in range(len(parts), 0, -1):
+            subtag = get_locale_identifier(parts[:i])
+            if subtag in likely_subtags:
+                parts = parse_locale(likely_subtags[subtag])
+                locale = _try_load(parts)
+                if locale is not None:
+                    return locale
+
+        raise UnknownLocaleError(input_id)
 
     def __eq__(self, other: object) -> bool:
         for key in ('language', 'territory', 'script', 'variant', 'modifier'):
